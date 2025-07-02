@@ -54,3 +54,29 @@ def build_pipeline(numeric_features, categorical_features):
     ])
 
     return preprocessor
+def create_proxy_target(df, snapshot_date=None):
+    df['TransactionStartTime'] = pd.to_datetime(df['TransactionStartTime'])
+    
+    if snapshot_date is None:
+        snapshot_date = df['TransactionStartTime'].max() + pd.Timedelta(days=1)
+    
+    rfm = df.groupby('CustomerId').agg({
+        'TransactionStartTime': lambda x: (snapshot_date - x.max()).days,
+        'TransactionId': 'count',
+        'Amount': 'sum'
+    }).reset_index()
+
+    rfm.columns = ['CustomerId', 'Recency', 'Frequency', 'Monetary']
+    
+    scaler = StandardScaler()
+    rfm_scaled = scaler.fit_transform(rfm[['Recency', 'Frequency', 'Monetary']])
+
+    kmeans = KMeans(n_clusters=3, random_state=42)
+    rfm['Cluster'] = kmeans.fit_predict(rfm_scaled)
+
+    # Example logic to determine high risk
+    high_risk_cluster = rfm.groupby('Cluster')['Recency'].mean().idxmax()
+    
+    rfm['is_high_risk'] = (rfm['Cluster'] == high_risk_cluster).astype(int)
+    
+    return df.merge(rfm[['CustomerId', 'is_high_risk']], on='CustomerId', how='left')
